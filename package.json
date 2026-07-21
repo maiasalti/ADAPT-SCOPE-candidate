@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "test": "vitest run",
-    "test:hidden": "vitest run --config vitest.hidden.config.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "express": "^4.19.2"
