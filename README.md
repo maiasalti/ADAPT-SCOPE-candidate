@@ -1,4 +1,5 @@
 # FinGuard
+<!-- smoketest: verifying end-to-end assessment pipeline -->
 
 A small insurance-claims API used for internal SCOPE assessments.
 
