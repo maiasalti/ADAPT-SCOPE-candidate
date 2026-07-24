@@ -1,0 +1,112 @@
+diff --git a/src/routes/claims.ts b/src/routes/claims.ts
+index 5105db1..b8a40bc 100644
+--- a/src/routes/claims.ts
++++ b/src/routes/claims.ts
+@@ -1,6 +1,7 @@
+ import { Router } from 'express';
+ import { getPolicyById, updateClaimStatus } from '../services/policyDb';
+ import { summarizeClaimWithBedrock } from '../services/summarization';
++import { withdrawClaim } from '../services/claimWithdrawal';
+ import { validate } from '../middleware/validate';
+ 
+ export const claimsRouter = Router();
+@@ -40,3 +41,19 @@ claimsRouter.post(
+     });
+   }
+ );
++
++claimsRouter.post('/:claimId/withdraw', (req, res) => {
++  const { claimId } = req.params;
++  const result = withdrawClaim(claimId);
++
++  if (!result.ok) {
++    if (result.reason === 'not_found') {
++      res.status(404).json({ error: `Claim not found: ${claimId}` });
++      return;
++    }
++    res.status(409).json({ error: `Claim ${claimId} cannot be withdrawn from status: ${result.status}` });
++    return;
++  }
++
++  res.status(200).json(result.claim);
++});
+diff --git a/src/services/claimWithdrawal.ts b/src/services/claimWithdrawal.ts
+new file mode 100644
+index 0000000..1633b84
+--- /dev/null
++++ b/src/services/claimWithdrawal.ts
+@@ -0,0 +1,26 @@
++import { query } from '../db';
++import { redact } from '../middleware/redact';
++
++export type WithdrawClaimResult =
++  | { ok: true; claim: { id: string; status: string } }
++  | { ok: false; reason: 'not_found' }
++  | { ok: false; reason: 'invalid_status'; status: string };
++
++export function withdrawClaim(claimId: string): WithdrawClaimResult {
++  const rows = query('SELECT * FROM claims WHERE id = ?', [claimId]);
++  const claim = rows[0];
++
++  if (!claim) {
++    return { ok: false, reason: 'not_found' };
++  }
++
++  if (claim.status !== 'submitted') {
++    return { ok: false, reason: 'invalid_status', status: claim.status };
++  }
++
++  query('UPDATE claims SET status = ? WHERE id = ?', ['withdrawn', claimId]);
++
++  console.log('Claim withdrawn:', JSON.stringify(redact({ claimId, status: 'withdrawn' })));
++
++  return { ok: true, claim: { id: claimId, status: 'withdrawn' } };
++}
+diff --git a/test/claims.test.ts b/test/claims.test.ts
+index e4059fb..c708c2c 100644
+--- a/test/claims.test.ts
++++ b/test/claims.test.ts
+@@ -50,3 +50,43 @@ describe('POST /claims/submit', () => {
+     expect(res.status).toBe(400);
+   });
+ });
++
++describe('POST /claims/:claimId/withdraw', () => {
++  beforeEach(() => resetDb());
++
++  it('withdraws a submitted claim', async () => {
++    const app = createApp();
++    const res = await request(app).post('/claims/clm-1/withdraw');
++    expect(res.status).toBe(200);
++    expect(res.body).toEqual({ id: 'clm-1', status: 'withdrawn' });
++  });
++
++  it('returns 404 for an unknown claim', async () => {
++    const app = createApp();
++    const res = await request(app).post('/claims/nope/withdraw');
++    expect(res.status).toBe(404);
++    expect(res.body).toHaveProperty('error');
++  });
++
++  it('returns 409 when the claim is not in submitted status', async () => {
++    const app = createApp();
++    await request(app).post('/claims/submit').send({
++      claimId: 'clm-1',
++      policyId: 'pol-1',
++      amount: 500,
++    });
++
++    const res = await request(app).post('/claims/clm-1/withdraw');
++    expect(res.status).toBe(409);
++    expect(res.body).toHaveProperty('error');
++  });
++
++  it('returns 409 when withdrawing an already-withdrawn claim', async () => {
++    const app = createApp();
++    await request(app).post('/claims/clm-1/withdraw');
++
++    const res = await request(app).post('/claims/clm-1/withdraw');
++    expect(res.status).toBe(409);
++    expect(res.body).toHaveProperty('error');
++  });
++});
