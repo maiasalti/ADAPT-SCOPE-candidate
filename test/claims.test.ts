@@ -50,3 +50,41 @@ describe('POST /claims/submit', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('POST /claims/:claimId/withdraw', () => {
+  beforeEach(() => resetDb());
+
+  it('withdraws a submitted claim', async () => {
+    const app = createApp();
+    const res = await request(app).post('/claims/clm-1/withdraw');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ id: 'clm-1', status: 'withdrawn' });
+  });
+
+  it('returns 404 for an unknown claim', async () => {
+    const app = createApp();
+    const res = await request(app).post('/claims/nope/withdraw');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBeDefined();
+  });
+
+  it('returns 409 when the claim is already withdrawn', async () => {
+    const app = createApp();
+    await request(app).post('/claims/clm-1/withdraw');
+    const res = await request(app).post('/claims/clm-1/withdraw');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBeDefined();
+  });
+
+  it('returns 409 when the claim has already been approved', async () => {
+    const app = createApp();
+    await request(app).post('/claims/submit').send({
+      claimId: 'clm-1',
+      policyId: 'pol-1',
+      amount: 500,
+    });
+    const res = await request(app).post('/claims/clm-1/withdraw');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBeDefined();
+  });
+});

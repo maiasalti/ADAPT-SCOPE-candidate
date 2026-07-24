@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { getPolicyById, updateClaimStatus } from '../src/services/policyDb';
+import { getPolicyById, updateClaimStatus, getClaimById, withdrawClaim } from '../src/services/policyDb';
 import { resetDb, query } from '../src/db';
 
 describe('policyDb', () => {
@@ -18,5 +18,20 @@ describe('policyDb', () => {
     updateClaimStatus('clm-1', 'approved');
     const rows = query('SELECT * FROM claims WHERE id = ?', ['clm-1']);
     expect(rows[0].status).toBe('approved');
+  });
+
+  it('looks up a claim by id', () => {
+    const claim = getClaimById('clm-1');
+    expect(claim?.status).toBe('submitted');
+  });
+
+  it('returns undefined for an unknown claim', () => {
+    expect(getClaimById('nope')).toBeUndefined();
+  });
+
+  it('withdraws a claim', () => {
+    withdrawClaim('clm-1');
+    const rows = query('SELECT * FROM claims WHERE id = ?', ['clm-1']);
+    expect(rows[0].status).toBe('withdrawn');
   });
 });

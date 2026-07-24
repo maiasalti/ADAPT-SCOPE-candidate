@@ -1,7 +1,8 @@
 import { Router } from 'express';
-import { getPolicyById, updateClaimStatus } from '../services/policyDb';
+import { getPolicyById, updateClaimStatus, getClaimById, withdrawClaim } from '../services/policyDb';
 import { summarizeClaimWithBedrock } from '../services/summarization';
 import { validate } from '../middleware/validate';
+import { redact } from '../middleware/redact';
 
 export const claimsRouter = Router();
 
@@ -38,5 +39,29 @@ claimsRouter.post(
       summary: summaryResult.summary,
       policy,
     });
+  }
+);
+
+claimsRouter.post(
+  '/:claimId/withdraw',
+  validate([{ field: 'claimId', required: true, source: 'params' }]),
+  (req, res) => {
+    const { claimId } = req.params;
+
+    const claim = getClaimById(claimId);
+    if (!claim) {
+      res.status(404).json({ error: `Claim not found: ${claimId}` });
+      return;
+    }
+
+    if (claim.status !== 'submitted') {
+      res.status(409).json({ error: `Claim ${claimId} cannot be withdrawn from status: ${claim.status}` });
+      return;
+    }
+
+    const updated = withdrawClaim(claimId);
+    console.log('Claim withdrawn:', redact({ claimId: updated.id, status: updated.status }));
+
+    res.status(200).json({ id: updated.id, status: updated.status });
   }
 );
