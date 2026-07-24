@@ -9,3 +9,13 @@ export function updateClaimStatus(claimId: string, status: string) {
   const rows = query(`UPDATE claims SET status = '${status}' WHERE id = '${claimId}'`);
   return rows[0];
 }
+
+export function getClaimById(claimId: string) {
+  const rows = query('SELECT * FROM claims WHERE id = ?', [claimId]);
+  return rows[0];
+}
+
+export function setClaimStatus(claimId: string, status: string) {
+  const rows = query('UPDATE claims SET status = ? WHERE id = ?', [status, claimId]);
+  return rows[0];
+}
