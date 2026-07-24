@@ -1,0 +1,247 @@
+diff --git a/package-lock.json b/package-lock.json
+index b3a7c77..c0dd9e6 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -584,9 +584,6 @@
+         "arm"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -601,9 +598,6 @@
+         "arm"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -618,9 +612,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -635,9 +626,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -652,9 +640,6 @@
+         "loong64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -669,9 +654,6 @@
+         "loong64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -686,9 +668,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -703,9 +682,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -720,9 +696,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -737,9 +710,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -754,9 +724,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -771,9 +738,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -788,9 +752,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+diff --git a/src/routes/claims.ts b/src/routes/claims.ts
+index 5105db1..e701d9a 100644
+--- a/src/routes/claims.ts
++++ b/src/routes/claims.ts
+@@ -1,6 +1,7 @@
+ import { Router } from 'express';
+ import { getPolicyById, updateClaimStatus } from '../services/policyDb';
+ import { summarizeClaimWithBedrock } from '../services/summarization';
++import { withdrawClaim } from '../services/claimWithdrawal';
+ import { validate } from '../middleware/validate';
+ 
+ export const claimsRouter = Router();
+@@ -40,3 +41,15 @@ claimsRouter.post(
+     });
+   }
+ );
++
++claimsRouter.post('/:claimId/withdraw', (req, res) => {
++  const { claimId } = req.params;
++
++  const result = withdrawClaim(claimId);
++  if (!result.ok) {
++    res.status(result.httpStatus).json({ error: result.error });
++    return;
++  }
++
++  res.status(200).json(result.claim);
++});
+diff --git a/src/services/claimWithdrawal.ts b/src/services/claimWithdrawal.ts
+new file mode 100644
+index 0000000..306d23a
+--- /dev/null
++++ b/src/services/claimWithdrawal.ts
+@@ -0,0 +1,26 @@
++import { getClaimById, setClaimStatus } from './policyDb';
++
++export type WithdrawClaimResult =
++  | { ok: true; claim: { id: string; status: string } }
++  | { ok: false; httpStatus: 404 | 409; error: string };
++
++export function withdrawClaim(claimId: string): WithdrawClaimResult {
++  const claim = getClaimById(claimId);
++
++  if (!claim) {
++    return { ok: false, httpStatus: 404, error: `Claim not found: ${claimId}` };
++  }
++
++  if (claim.status !== 'submitted') {
++    return {
++      ok: false,
++      httpStatus: 409,
++      error: `Claim ${claimId} cannot be withdrawn from status '${claim.status}'`,
++    };
++  }
++
++  setClaimStatus(claimId, 'withdrawn');
++  console.log(`Claim withdrawn (audit): claimId=${claimId}`);
++
++  return { ok: true, claim: { id: claimId, status: 'withdrawn' } };
++}
+diff --git a/src/services/policyDb.ts b/src/services/policyDb.ts
+index 336e014..525dfcb 100644
+--- a/src/services/policyDb.ts
++++ b/src/services/policyDb.ts
+@@ -9,3 +9,13 @@ export function updateClaimStatus(claimId: string, status: string) {
+   const rows = query(`UPDATE claims SET status = '${status}' WHERE id = '${claimId}'`);
+   return rows[0];
+ }
++
++export function getClaimById(claimId: string) {
++  const rows = query('SELECT * FROM claims WHERE id = ?', [claimId]);
++  return rows[0];
++}
++
++export function setClaimStatus(claimId: string, status: string) {
++  const rows = query('UPDATE claims SET status = ? WHERE id = ?', [status, claimId]);
++  return rows[0];
++}
+diff --git a/test/claims.test.ts b/test/claims.test.ts
+index e4059fb..fb185e7 100644
+--- a/test/claims.test.ts
++++ b/test/claims.test.ts
+@@ -50,3 +50,30 @@ describe('POST /claims/submit', () => {
+     expect(res.status).toBe(400);
+   });
+ });
++
++describe('POST /claims/:claimId/withdraw', () => {
++  beforeEach(() => resetDb());
++
++  it('withdraws a submitted claim', async () => {
++    const app = createApp();
++    const res = await request(app).post('/claims/clm-1/withdraw').send();
++    expect(res.status).toBe(200);
++    expect(res.body).toEqual({ id: 'clm-1', status: 'withdrawn' });
++  });
++
++  it('returns 404 for an unknown claim', async () => {
++    const app = createApp();
++    const res = await request(app).post('/claims/nope/withdraw').send();
++    expect(res.status).toBe(404);
++    expect(res.body.error).toBeTypeOf('string');
++  });
++
++  it('returns 409 when the claim is not in submitted status', async () => {
++    const app = createApp();
++    await request(app).post('/claims/clm-1/withdraw').send();
++
++    const res = await request(app).post('/claims/clm-1/withdraw').send();
++    expect(res.status).toBe(409);
++    expect(res.body.error).toBeTypeOf('string');
++  });
++});
