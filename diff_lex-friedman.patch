@@ -1,0 +1,225 @@
+diff --git a/.claude/skills/code-reviewer/SKILL.md b/.claude/skills/code-reviewer/SKILL.md
+@@ -0,0 +1,69 @@
++---
++name: code-reviewer
++description: Reviews code changes (diffs, new files, or a whole module) for correctness, clarity, security, and adherence to project conventions. Use whenever a change is ready for a second pass before it's considered done, or when explicitly asked to "review" or "critique" code.
++---
++
++# Code Reviewer
++
++A general-purpose skill for reviewing code the way a careful senior
++engineer would during a PR review. Applies to any language or project,
++not just this repo.
++
++## When to use this skill
++
++- After implementing a feature or fix, before declaring it complete.
++- When asked to review, critique, or sanity-check a diff, file, or PR.
++- Before merging/pushing changes that touch shared or critical code paths.
++
++## What to check
++
++1. **Correctness**
++   - Does the code do what it claims to do? Trace through the main
++     path and the edge cases (empty input, missing/null values,
++     boundary conditions, concurrent access if relevant).
++   - Are error paths handled explicitly, or silently swallowed?
++   - Do return values, status codes, and response shapes match what
++     callers/tests/specs expect?
++
++2. **Project conventions**
++   - Check for a project rules file (e.g. `CLAUDE.md`, `CONTRIBUTING.md`,
++     `.editorconfig`, lint config) and confirm the change follows it.
++   - Match existing patterns in the codebase (naming, file layout,
++     module boundaries, error-handling style) rather than introducing
++     a new style.
++
++3. **Security**
++   - No string-built queries/commands from untrusted input (SQL/OS
++     command/HTML injection). Parameterize instead.
++   - No secrets, tokens, or credentials hardcoded in source.
++   - No sensitive data (PII/PHI, credentials, tokens) written to logs
++     or error messages in plaintext.
++   - Input validation exists at trust boundaries (API handlers, CLI
++     args, file parsing).
++
++4. **Clarity & maintainability**
++   - Is the change minimal and focused on what was asked, or does it
++     carry unrelated refactors/scope creep?
++   - Are names, functions, and modules doing one clear thing?
++   - Is there dead code, commented-out code, or leftover debug
++     statements that should be removed?
++   - Are comments used only where the "why" isn't obvious from the
++     code itself (not restating the "what")?
++
++5. **Tests**
++   - Do tests exist for the new behavior, including the failure/edge
++     cases, not just the happy path?
++   - Do existing tests still pass? Were any tests weakened or deleted
++     just to make the change pass?
++
++## How to report findings
++
++- Group feedback by severity: **blocking** (bugs, security issues,
++  broken conventions) vs. **suggestions** (style, minor readability).
++- Reference specific file paths and line numbers.
++- For each issue, state what's wrong and why it matters — don't just
++  assert a preference.
++- Don't rewrite the whole file; propose the smallest change that
++  fixes the issue.
++- If everything looks good, say so plainly instead of inventing
++  nitpicks.
+diff --git a/.claude/skills/debugger/SKILL.md b/.claude/skills/debugger/SKILL.md
+@@ -0,0 +1,74 @@
++---
++name: debugger
++description: Systematically root-causes and fixes bugs — failing tests, stack traces, crashes, or unexpected behavior — instead of guessing or patching symptoms. Use whenever something is broken, throwing, or not behaving as expected.
++---
++
++# Debugger
++
++A general-purpose skill for diagnosing and fixing bugs methodically,
++in any language or project.
++
++## When to use this skill
++
++- A test is failing and the cause isn't immediately obvious.
++- An error, exception, or stack trace needs to be traced to its
++  source.
++- Behavior doesn't match the spec/expectation and the reason is
++  unclear.
++- Something worked before and now doesn't (regression).
++
++## Process
++
++1. **Reproduce first.**
++   - Get a minimal, reliable way to trigger the bug (a failing test,
++     a specific request/input, a repro script). Don't start editing
++     code before you can reliably observe the failure.
++   - If it's intermittent, note what varies between runs (timing,
++     ordering, external state).
++
++2. **Read the actual error, don't skim it.**
++   - Note the exact message, type, and full stack trace.
++   - Identify the innermost frame that belongs to project code (vs.
++     library/framework internals) — that's usually the most useful
++     starting point.
++
++3. **Form a hypothesis before changing code.**
++   - State, in one sentence, what you think is wrong and why.
++   - Identify what evidence would confirm or rule it out.
++
++4. **Localize with evidence, not guesses.**
++   - Use logging, print statements, a debugger, or targeted small
++     tests to narrow down where actual behavior diverges from
++     expected behavior.
++   - Binary-search through the call path if the failure is far from
++     the entry point: check inputs/outputs at intermediate steps
++     rather than staring at the whole flow at once.
++   - Check assumptions explicitly: is this value what you think it
++     is? Is this function even being called? Is this branch actually
++     taken?
++
++5. **Find the root cause, not just a symptom.**
++   - Prefer understanding *why* the bug happens over a change that
++     merely makes the symptom disappear (e.g. swallowing an exception,
++     adding a null check that masks a deeper data problem).
++   - If a quick patch is applied under time pressure, say explicitly
++     that it's a workaround and what the underlying issue still is.
++
++6. **Fix minimally and verify.**
++   - Make the smallest change that addresses the root cause.
++   - Re-run the original repro/failing test to confirm it now passes.
++   - Run the broader test suite to check for regressions elsewhere.
++   - Add a regression test that would have caught the bug, if one
++     doesn't already exist.
++
++7. **Explain the fix.**
++   - Summarize: what was broken, why it was happening, and what
++     changed — concisely, so the reasoning is auditable later.
++
++## Anti-patterns to avoid
++
++- Changing multiple unrelated things at once "to see if it helps."
++- Catching/suppressing an error without understanding why it occurred.
++- Declaring victory because the specific symptom went away without
++  confirming the actual root cause was addressed.
++- Skipping reproduction and reasoning purely from reading code.
+diff --git a/.claude/skills/efficient-code-checker/SKILL.md b/.claude/skills/efficient-code-checker/SKILL.md
+@@ -0,0 +1,76 @@
++---
++name: efficient-code-checker
++description: Analyzes code for performance and efficiency issues — unnecessary work, poor algorithmic complexity, wasteful I/O or memory use — and suggests concrete improvements. Use when asked to check performance, optimize, or when reviewing code that runs on hot paths or large inputs.
++---
++
++# Efficient Code Checker
++
++A general-purpose skill for evaluating whether code is efficient, and
++recommending fixes when it isn't. Applies broadly, not tied to any one
++language or project.
++
++## When to use this skill
++
++- Explicitly asked to check performance, optimize, or "make this
++  faster/more efficient."
++- Reviewing code that processes large inputs, runs frequently (hot
++  paths, request handlers, loops over data), or has visible latency.
++- Before shipping code where scale (data size, request volume) is a
++  known concern.
++
++## What to check
++
++1. **Algorithmic complexity**
++   - Identify nested loops, repeated linear scans, or repeated lookups
++     over the same collection that could be replaced with a map/set
++     for O(1) lookup instead of O(n).
++   - Watch for accidental quadratic (or worse) behavior: e.g. `.includes()`
++     or `.find()` inside a loop over another collection.
++   - Check recursive code for redundant recomputation (missing
++     memoization) or lack of a base case that bounds work.
++
++2. **Unnecessary work**
++   - Repeated computation of the same value inside a loop that could
++     be hoisted outside it.
++   - Re-parsing, re-serializing, or re-fetching data that's already
++     available.
++   - Work being done eagerly that's never used (unused branches,
++     over-fetching fields/rows beyond what's needed).
++
++3. **I/O and external calls**
++   - N+1 query/request patterns — a call to a DB/API inside a loop
++     instead of batching.
++   - Missing pagination/streaming when handling large datasets or
++     files (loading everything into memory at once).
++   - Synchronous/blocking calls on a path that could be concurrent or
++     async, where correctness doesn't require sequencing.
++
++4. **Memory use**
++   - Unbounded caches, arrays, or buffers that grow without limit.
++   - Copying large structures unnecessarily instead of operating on
++     them in place or via references (where safe to do so).
++   - Holding onto large objects/resources longer than needed (not
++     releasing connections, file handles, listeners).
++
++5. **Data structure fit**
++   - Using a list where a set/map would make membership checks or
++     lookups cheaper.
++   - Sorting or scanning repeatedly when the data could be indexed or
++     sorted once and reused.
++
++## How to report findings
++
++- Point to the specific hot spot (file/line/function) and describe
++  the current complexity or cost (e.g. "O(n²) due to `.find()` inside
++  a loop over the same array").
++- Propose a concrete, minimal alternative — don't just say "this is
++  slow."
++- Prioritize fixes that matter for realistic input sizes/traffic over
++  micro-optimizations with no measurable impact; don't recommend
++  premature optimization for code that isn't on a hot path or doesn't
++  handle meaningful scale.
++- If correctness or readability would be meaningfully sacrificed for a
++  marginal speed gain, say so and let that trade-off be a decision,
++  not a silent choice.
++- If the code is already efficient for its actual scale, say so
++  rather than inventing changes.
