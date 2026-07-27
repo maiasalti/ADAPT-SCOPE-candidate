@@ -51,4 +51,24 @@ describe('validate', () => {
     middleware(req, res, next);
     expect(res.status).toHaveBeenCalledWith(400);
   });
+
+  it('validates route params when source is "params"', () => {
+    const middleware = validate([{ field: 'claimId', required: true, source: 'params' }]);
+    const req: any = { body: {}, params: { claimId: 'clm-1' } };
+    const res = mockRes();
+    const next = vi.fn();
+    middleware(req, res, next);
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('responds 400 when a required route param is missing', () => {
+    const middleware = validate([{ field: 'claimId', required: true, source: 'params' }]);
+    const req: any = { body: {}, params: {} };
+    const res = mockRes();
+    const next = vi.fn();
+    middleware(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(next).not.toHaveBeenCalled();
+  });
 });
