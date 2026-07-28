@@ -1,0 +1,198 @@
+diff --git a/KNOWN_ISSUES.md b/KNOWN_ISSUES.md
+@@ -0,0 +1,71 @@
++# Known Issues — Pre-existing, Out of Scope for Claim Withdrawal
++
++While implementing `POST /claims/:claimId/withdraw` (see `TICKET.md`), three
++pre-existing issues were found in the claim **submission/approval** path.
++None of them affect the new withdrawal endpoint, and the ticket explicitly
++scoped out "changes to claim submission or approval logic," so they were
++left as-is. Flagging here for a follow-up ticket.
++
++## 1. SQL-injection-style string interpolation in `getPolicyById`
++
++**File:** `src/services/policyDb.ts`
++
++```ts
++export function getPolicyById(policyId: string) {
++  const rows = query(`SELECT * FROM policies WHERE id = '${policyId}'`);
++  return rows[0];
++}
++```
++
++`policyId` is spliced directly into the query string instead of being
++passed as a `?` placeholder param, which `CLAUDE.md` explicitly requires
++("Never interpolate values into a SQL string"). `policyId` currently comes
++from the `/claims/submit` request body, so this is reachable from
++user-controlled input. The in-memory `query()` engine doesn't execute real
++SQL today, but the pattern is unsafe and would become a real injection risk
++if `db.ts` were ever swapped for a real database driver.
++
++**Suggested fix:** `query('SELECT * FROM policies WHERE id = ?', [policyId])`
++(same fix already applied to `updateClaimStatus`/`getClaimById` as part of
++the withdrawal work, since those were on the withdrawal code path).
++
++## 2. Unredacted PII/PHI logging in `summarizeClaimWithBedrock`
++
++**File:** `src/services/summarization.ts`
++
++```ts
++export function summarizeClaimWithBedrock(request: ClaimSummaryRequest) {
++  console.log('Bedrock request payload:', JSON.stringify(request));
++  ...
++```
++
++This logs the full request — including `ssn` and `patientName` — straight
++to stdout on every claim submission, without passing it through `redact()`
++first, contrary to `CLAUDE.md` ("Never log PII/PHI... Pass any payload that
++might contain it through `redact()`... before logging"). Depending on where
++these logs are shipped (e.g. a log aggregator), this could be a real
++PII/PHI exposure.
++
++**Suggested fix:**
++`console.log('Bedrock request payload:', JSON.stringify(redact(request)));`
++
++## 3. Silently swallowed error when persisting claim status on submit
++
++**File:** `src/routes/claims.ts`, in the `/submit` handler
++
++```ts
++try {
++  updateClaimStatus(claimId, status);
++} catch {
++  // existing behavior — not part of this task
++}
++```
++
++If `updateClaimStatus` throws for any reason, the handler still responds
++`200` with the computed `approved`/`denied` status even though that status
++was never actually persisted — so the API's response can silently disagree
++with what's stored. There's no logging or surfacing of the failure at all.
++
++**Suggested fix:** at minimum, log the error (redacted) for visibility;
++depending on desired behavior, consider surfacing a 5xx to the caller when
++the persistence step fails, so responses don't claim success incorrectly.
+diff --git a/src/middleware/validate.ts b/src/middleware/validate.ts
+@@ -4,12 +4,14 @@ export interface FieldRule {
+   field: string;
+   required: boolean;
+   pattern?: RegExp;
++  source?: 'body' | 'params';
+ }
+ 
+ export function validate(rules: FieldRule[]) {
+   return (req: Request, res: Response, next: NextFunction) => {
+     for (const rule of rules) {
+-      const value = req.body[rule.field];
++      const source = rule.source === 'params' ? req.params : req.body;
++      const value = source[rule.field];
+       if (rule.required && (value === undefined || value === null || value === '')) {
+         res.status(400).json({ error: `Missing required field: ${rule.field}` });
+         return;
+diff --git a/src/routes/claims.ts b/src/routes/claims.ts
+@@ -1,7 +1,9 @@
+ import { Router } from 'express';
+ import { getPolicyById, updateClaimStatus } from '../services/policyDb';
+ import { summarizeClaimWithBedrock } from '../services/summarization';
++import { withdrawClaim } from '../services/claimWithdrawal';
+ import { validate } from '../middleware/validate';
++import { redact } from '../middleware/redact';
+ 
+ export const claimsRouter = Router();
+ 
+@@ -40,3 +42,27 @@ claimsRouter.post(
+     });
+   }
+ );
++
++claimsRouter.post(
++  '/:claimId/withdraw',
++  validate([{ field: 'claimId', required: true, source: 'params' }]),
++  (req, res) => {
++    const { claimId } = req.params;
++    const result = withdrawClaim(claimId);
++
++    if (result.outcome === 'not_found') {
++      res.status(404).json({ error: `Claim ${claimId} not found` });
++      return;
++    }
++
++    if (result.outcome === 'conflict') {
++      res.status(409).json({
++        error: `Claim ${claimId} cannot be withdrawn from status "${result.currentStatus}"`,
++      });
++      return;
++    }
++
++    console.log('Claim withdrawn:', JSON.stringify(redact(result.claim)));
++    res.status(200).json(result.claim);
++  }
++);
+diff --git a/src/services/claimWithdrawal.ts b/src/services/claimWithdrawal.ts
+@@ -0,0 +1,20 @@
++import { getClaimById, updateClaimStatus } from './policyDb';
++
++export type WithdrawResult =
++  | { outcome: 'not_found' }
++  | { outcome: 'conflict'; currentStatus: string }
++  | { outcome: 'withdrawn'; claim: { id: string; status: string } };
++
++export function withdrawClaim(claimId: string): WithdrawResult {
++  const claim = getClaimById(claimId);
++  if (!claim) {
++    return { outcome: 'not_found' };
++  }
++
++  if (claim.status !== 'submitted') {
++    return { outcome: 'conflict', currentStatus: claim.status };
++  }
++
++  const updated = updateClaimStatus(claimId, 'withdrawn');
++  return { outcome: 'withdrawn', claim: { id: updated.id, status: updated.status } };
++}
+diff --git a/src/services/policyDb.ts b/src/services/policyDb.ts
+@@ -5,7 +5,12 @@ export function getPolicyById(policyId: string) {
+   return rows[0];
+ }
+ 
++export function getClaimById(claimId: string) {
++  const rows = query('SELECT * FROM claims WHERE id = ?', [claimId]);
++  return rows[0];
++}
++
+ export function updateClaimStatus(claimId: string, status: string) {
+-  const rows = query(`UPDATE claims SET status = '${status}' WHERE id = '${claimId}'`);
++  const rows = query('UPDATE claims SET status = ? WHERE id = ?', [status, claimId]);
+   return rows[0];
+ }
+diff --git a/test/claims.test.ts b/test/claims.test.ts
+@@ -50,3 +50,30 @@ describe('POST /claims/submit', () => {
+     expect(res.status).toBe(400);
+   });
+ });
++
++describe('POST /claims/:claimId/withdraw', () => {
++  beforeEach(() => resetDb());
++
++  it('withdraws a submitted claim', async () => {
++    const app = createApp();
++    const res = await request(app).post('/claims/clm-1/withdraw').send();
++    expect(res.status).toBe(200);
++    expect(res.body).toEqual({ id: 'clm-1', status: 'withdrawn' });
++  });
++
++  it('returns 404 for an unknown claim', async () => {
++    const app = createApp();
++    const res = await request(app).post('/claims/nope/withdraw').send();
++    expect(res.status).toBe(404);
++    expect(res.body.error).toBeTypeOf('string');
++  });
++
++  it('returns 409 when the claim is not in submitted status', async () => {
++    const app = createApp();
++    await request(app).post('/claims/clm-1/withdraw').send();
++
++    const res = await request(app).post('/claims/clm-1/withdraw').send();
++    expect(res.status).toBe(409);
++    expect(res.body.error).toBeTypeOf('string');
++  });
++});
