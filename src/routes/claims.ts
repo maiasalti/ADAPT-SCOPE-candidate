@@ -42,14 +42,18 @@ claimsRouter.post(
   }
 );
 
-claimsRouter.post('/:claimId/withdraw', (req, res) => {
-  const { claimId } = req.params;
+claimsRouter.post(
+  '/:claimId/withdraw',
+  validate([{ field: 'claimId', required: true }]),
+  (req, res) => {
+    const { claimId } = req.params;
 
-  const result = withdrawClaim(claimId);
-  if (!result.ok) {
-    res.status(result.httpStatus).json({ error: result.error });
-    return;
+    const result = withdrawClaim(claimId);
+    if (!result.ok) {
+      res.status(result.httpStatus).json({ error: result.error });
+      return;
+    }
+
+    res.status(200).json(result.claim);
   }
-
-  res.status(200).json(result.claim);
-});
+);

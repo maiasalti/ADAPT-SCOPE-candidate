@@ -1,4 +1,5 @@
 import { getClaimById, setClaimStatus } from './policyDb';
+import { redact } from '../middleware/redact';
 
 export type WithdrawClaimResult =
   | { ok: true; claim: { id: string; status: string } }
@@ -19,8 +20,15 @@ export function withdrawClaim(claimId: string): WithdrawClaimResult {
     };
   }
 
+  const previousStatus = claim.status;
   setClaimStatus(claimId, 'withdrawn');
-  console.log(`Claim withdrawn (audit): claimId=${claimId}`);
+
+  const auditPayload = {
+    claimId,
+    previousStatus,
+    newStatus: 'withdrawn',
+  };
+  console.log('Claim withdrawn (audit):', redact(auditPayload));
 
   return { ok: true, claim: { id: claimId, status: 'withdrawn' } };
 }
