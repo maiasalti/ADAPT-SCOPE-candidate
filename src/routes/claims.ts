@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getPolicyById, updateClaimStatus } from '../services/policyDb';
 import { summarizeClaimWithBedrock } from '../services/summarization';
+import { withdrawClaim } from '../services/claimWithdrawal';
 import { validate } from '../middleware/validate';
 
 export const claimsRouter = Router();
@@ -38,5 +39,21 @@ claimsRouter.post(
       summary: summaryResult.summary,
       policy,
     });
+  }
+);
+
+claimsRouter.post(
+  '/:claimId/withdraw',
+  validate([{ field: 'claimId', required: true }]),
+  (req, res) => {
+    const { claimId } = req.params;
+
+    const result = withdrawClaim(claimId);
+    if (!result.ok) {
+      res.status(result.httpStatus).json({ error: result.error });
+      return;
+    }
+
+    res.status(200).json(result.claim);
   }
 );

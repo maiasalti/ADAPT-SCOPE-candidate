@@ -9,7 +9,7 @@ export interface FieldRule {
 export function validate(rules: FieldRule[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     for (const rule of rules) {
-      const value = req.body[rule.field];
+      const value = req.body?.[rule.field] ?? req.params?.[rule.field];
       if (rule.required && (value === undefined || value === null || value === '')) {
         res.status(400).json({ error: `Missing required field: ${rule.field}` });
         return;
