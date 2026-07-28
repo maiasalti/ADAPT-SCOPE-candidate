@@ -1,0 +1,129 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+@@ -11,3 +11,7 @@
+   variables (`process.env.*`), never hardcoded in source.
+ - New endpoints must validate their input using `validate()` from
+   `src/middleware/validate.ts`.
++- Audit logs must always pass through `redact()` before logging, even
++  when the payload only touches fields that seem non-sensitive (e.g.
++  claim status) — this is easy to skip on small handlers, but the rule
++  applies regardless of what the current schema happens to contain.
+diff --git a/src/middleware/validate.ts b/src/middleware/validate.ts
+@@ -4,12 +4,13 @@ export interface FieldRule {
+   field: string;
+   required: boolean;
+   pattern?: RegExp;
++  source?: 'body' | 'params';
+ }
+ 
+ export function validate(rules: FieldRule[]) {
+   return (req: Request, res: Response, next: NextFunction) => {
+     for (const rule of rules) {
+-      const value = req.body[rule.field];
++      const value = rule.source === 'params' ? req.params[rule.field] : req.body[rule.field];
+       if (rule.required && (value === undefined || value === null || value === '')) {
+         res.status(400).json({ error: `Missing required field: ${rule.field}` });
+         return;
+diff --git a/src/routes/claims.ts b/src/routes/claims.ts
+@@ -1,6 +1,7 @@
+ import { Router } from 'express';
+ import { getPolicyById, updateClaimStatus } from '../services/policyDb';
+ import { summarizeClaimWithBedrock } from '../services/summarization';
++import { withdrawClaim } from '../services/claimWithdrawal';
+ import { validate } from '../middleware/validate';
+ 
+ export const claimsRouter = Router();
+@@ -40,3 +41,13 @@ claimsRouter.post(
+     });
+   }
+ );
++
++claimsRouter.post(
++  '/:claimId/withdraw',
++  validate([{ field: 'claimId', required: true, source: 'params' }]),
++  (req, res) => {
++    const { claimId } = req.params;
++    const result = withdrawClaim(claimId);
++    res.status(result.status).json(result.body);
++  }
++);
+diff --git a/src/services/claimWithdrawal.ts b/src/services/claimWithdrawal.ts
+@@ -0,0 +1,41 @@
++import { query } from '../db';
++import { redact } from '../middleware/redact';
++
++export interface WithdrawClaimResult {
++  status: 200 | 404 | 409;
++  body: { id: string; status: string } | { error: string };
++}
++
++export function withdrawClaim(claimId: string): WithdrawClaimResult {
++  const rows = query('SELECT * FROM claims WHERE id = ?', [claimId]);
++  const claim = rows[0];
++
++  if (!claim) {
++    return { status: 404, body: { error: `Claim not found: ${claimId}` } };
++  }
++
++  if (claim.status !== 'submitted') {
++    return {
++      status: 409,
++      body: { error: `Claim ${claimId} cannot be withdrawn from status: ${claim.status}` },
++    };
++  }
++
++  const previousStatus = claim.status;
++  query('UPDATE claims SET status = ? WHERE id = ?', ['withdrawn', claimId]);
++
++  console.log(
++    'Claim withdrawn:',
++    JSON.stringify(
++      redact({
++        claimId: claim.id,
++        policyId: claim.policyId,
++        amount: claim.amount,
++        previousStatus,
++        newStatus: 'withdrawn',
++      })
++    )
++  );
++
++  return { status: 200, body: { id: claim.id, status: 'withdrawn' } };
++}
+diff --git a/test/claimWithdrawal.test.ts b/test/claimWithdrawal.test.ts
+@@ -0,0 +1,36 @@
++import { describe, it, expect, beforeEach } from 'vitest';
++import { withdrawClaim } from '../src/services/claimWithdrawal';
++import { resetDb, query } from '../src/db';
++
++describe('withdrawClaim', () => {
++  beforeEach(() => resetDb());
++
++  it('returns 404 when the claim does not exist', () => {
++    const result = withdrawClaim('nope');
++    expect(result.status).toBe(404);
++    expect(result.body).toHaveProperty('error');
++  });
++
++  it('returns 409 when the claim is already approved', () => {
++    query('UPDATE claims SET status = ? WHERE id = ?', ['approved', 'clm-1']);
++    const result = withdrawClaim('clm-1');
++    expect(result.status).toBe(409);
++    expect(result.body).toHaveProperty('error');
++  });
++
++  it('returns 409 when the claim is already withdrawn', () => {
++    query('UPDATE claims SET status = ? WHERE id = ?', ['withdrawn', 'clm-1']);
++    const result = withdrawClaim('clm-1');
++    expect(result.status).toBe(409);
++    expect(result.body).toHaveProperty('error');
++  });
++
++  it('withdraws a submitted claim and returns 200 with the updated status', () => {
++    const result = withdrawClaim('clm-1');
++    expect(result.status).toBe(200);
++    expect(result.body).toEqual({ id: 'clm-1', status: 'withdrawn' });
++
++    const rows = query('SELECT * FROM claims WHERE id = ?', ['clm-1']);
++    expect(rows[0].status).toBe('withdrawn');
++  });
++});
