@@ -11,3 +11,7 @@
   variables (`process.env.*`), never hardcoded in source.
 - New endpoints must validate their input using `validate()` from
   `src/middleware/validate.ts`.
+- Audit logs must always pass through `redact()` before logging, even
+  when the payload only touches fields that seem non-sensitive (e.g.
+  claim status) — this is easy to skip on small handlers, but the rule
+  applies regardless of what the current schema happens to contain.
