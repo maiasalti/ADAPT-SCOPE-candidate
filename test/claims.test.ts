@@ -50,3 +50,29 @@ describe('POST /claims/submit', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('POST /claims/:claimId/withdraw', () => {
+  beforeEach(() => resetDb());
+
+  it('withdraws a submitted claim', async () => {
+    const app = createApp();
+    const res = await request(app).post('/claims/clm-1/withdraw').send();
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ id: 'clm-1', status: 'withdrawn' });
+  });
+
+  it('returns 404 for an unknown claim', async () => {
+    const app = createApp();
+    const res = await request(app).post('/claims/nope/withdraw').send();
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBeTypeOf('string');
+  });
+
+  it('returns 409 when the claim is not in submitted status', async () => {
+    const app = createApp();
+    await request(app).post('/claims/clm-1/withdraw').send();
+    const res = await request(app).post('/claims/clm-1/withdraw').send();
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBeTypeOf('string');
+  });
+});
