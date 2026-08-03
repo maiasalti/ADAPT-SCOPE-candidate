@@ -45,13 +45,10 @@ claimsRouter.post(
 claimsRouter.post('/:claimId/withdraw', (req, res) => {
   const { claimId } = req.params;
 
-  // validate() only inspects req.body, and this endpoint's only input is a
-  // route param, so the check is done inline here rather than via validate().
-  if (!claimId || typeof claimId !== 'string') {
-    res.status(400).json({ error: 'Missing or invalid claimId' });
-    return;
-  }
-
+  // validate() only inspects req.body, so it doesn't apply to a route-param
+  // input like this. No inline check is needed either: Express only invokes
+  // this handler when the :claimId segment matched, which guarantees
+  // req.params.claimId is a non-empty string.
   const result = withdrawClaim(claimId);
 
   if (!result.ok) {
