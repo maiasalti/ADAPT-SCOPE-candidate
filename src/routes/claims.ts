@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getPolicyById, updateClaimStatus } from '../services/policyDb';
 import { summarizeClaimWithBedrock } from '../services/summarization';
+import { withdrawClaim } from '../services/claims';
 import { validate } from '../middleware/validate';
 
 export const claimsRouter = Router();
@@ -40,3 +41,27 @@ claimsRouter.post(
     });
   }
 );
+
+claimsRouter.post('/:claimId/withdraw', (req, res) => {
+  const { claimId } = req.params;
+
+  // validate() only inspects req.body, and this endpoint's only input is a
+  // route param, so the check is done inline here rather than via validate().
+  if (!claimId || typeof claimId !== 'string') {
+    res.status(400).json({ error: 'Missing or invalid claimId' });
+    return;
+  }
+
+  const result = withdrawClaim(claimId);
+
+  if (!result.ok) {
+    if (result.reason === 'not_found') {
+      res.status(404).json({ error: `Claim ${claimId} not found` });
+      return;
+    }
+    res.status(409).json({ error: `Claim ${claimId} is ${result.currentStatus}, cannot be withdrawn` });
+    return;
+  }
+
+  res.status(200).json(result.claim);
+});
